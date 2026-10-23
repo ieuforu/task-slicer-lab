@@ -9,14 +9,20 @@ export const PriorityLevel = {
 
 export type PriorityLevel = (typeof PriorityLevel)[keyof typeof PriorityLevel];
 
-const TIMEOUT_CONFIG = {
+// 测试阈值：Background 设为 800ms，任务总耗时约 1000ms，在实验中必定跨越超时线触发提权
+const TIMEOUT_CONFIG: Record<PriorityLevel, number> = {
   [PriorityLevel.Immediate]: -1,
   [PriorityLevel.UserBlocking]: 250,
-  [PriorityLevel.Normal]: 5000,
-  [PriorityLevel.Background]: 10000,
+  [PriorityLevel.Normal]: 500,
+  [PriorityLevel.Background]: 800,
 };
 
 export type TaskCallback = (didTimeout: boolean) => boolean | void;
+
+export interface TaskOptions {
+  priority?: PriorityLevel;
+  signal?: AbortSignal;
+}
 
 export interface Task extends HeapItem {
   id: number;
@@ -24,6 +30,9 @@ export interface Task extends HeapItem {
   startTime: number;
   expirationTime: number;
   callback: TaskCallback;
+  signal?: AbortSignal;
+  isCancelled: boolean;
+  cancel: () => void;
 }
 
 export class TaskScheduler {
@@ -35,6 +44,8 @@ export class TaskScheduler {
 
   private channel: MessageChannel | null = null;
   public readonly isNativeYieldSupported: boolean;
+
+  public onStarvationResolved?: (task: Task, waitTimeMs: number) => void;
 
   constructor() {
     this.isNativeYieldSupported =
@@ -48,10 +59,8 @@ export class TaskScheduler {
     }
   }
 
-  /**
-   * 发布一个带优先级的任务
-   */
-  postTask(callback: TaskCallback, priority: PriorityLevel = PriorityLevel.Normal): Task {
+  postTask(callback: TaskCallback, options: TaskOptions = {}): Task {
+    const priority = options.priority ?? PriorityLevel.Normal;
     const currentTime = performance.now();
     const timeout = TIMEOUT_CONFIG[priority];
     const expirationTime = currentTime + timeout;
@@ -61,13 +70,30 @@ export class TaskScheduler {
       priority,
       startTime: currentTime,
       expirationTime,
-      sortIndex: expirationTime, // 最小堆以过期时间排序
+      sortIndex: expirationTime,
       callback,
+      signal: options.signal,
+      isCancelled: false,
+      cancel: () => {
+        task.isCancelled = true;
+      },
     };
 
-    this.taskQueue.push(task);
+    if (task.signal) {
+      if (task.signal.aborted) {
+        task.isCancelled = true;
+      } else {
+        task.signal.addEventListener(
+          "abort",
+          () => {
+            task.isCancelled = true;
+          },
+          { once: true },
+        );
+      }
+    }
 
-    // 请求执行循环
+    this.taskQueue.push(task);
     this.requestHostCallback();
     return task;
   }
@@ -85,15 +111,12 @@ export class TaskScheduler {
     }
   }
 
-  /**
-   * 核心工作循环（对标 React workLoop）
-   */
   private performWorkUntilDeadline() {
     this.isHostCallbackScheduled = false;
     this.isPerformingWork = true;
 
     const startTime = performance.now();
-    const frameBudget = 5; // 5ms 时间切片预算
+    const frameBudget = 5;
     let hasMoreWork = true;
 
     try {
@@ -101,9 +124,22 @@ export class TaskScheduler {
 
       while (this.currentTask !== null) {
         const currentTime = performance.now();
+
+        // 1. 惰性过滤已取消任务
+        if (this.currentTask.isCancelled || this.currentTask.signal?.aborted) {
+          this.taskQueue.pop();
+          this.currentTask = this.taskQueue.peek();
+          continue;
+        }
+
+        // 2. 防饥饿超时判定
         const didTimeout = this.currentTask.expirationTime <= currentTime;
 
-        // 如果单切片耗时超过 5ms 且当前最高优任务未超时，主动让出主线程
+        if (didTimeout && this.onStarvationResolved) {
+          this.onStarvationResolved(this.currentTask, currentTime - this.currentTask.startTime);
+        }
+
+        // 3. 只有未超时的任务在超过 5ms 时才会让出；超时的任务剥夺让出权，直接同步执行
         if (currentTime - startTime >= frameBudget && !didTimeout) {
           break;
         }
@@ -111,15 +147,13 @@ export class TaskScheduler {
         const callback = this.currentTask.callback;
         const continuation = callback(didTimeout);
 
-        // 如果回调返回 true，说明切片未跑完，保留堆顶续跑
-        if (continuation === true) {
-          // 重新检查当前堆顶：如果有更高优任务插队进来了，让出执行权
+        if (continuation === true && !this.currentTask.isCancelled) {
           const topTask = this.taskQueue.peek();
+          // 如果堆顶浮现了更高优先级的任务，让出当前切片让高优先行
           if (topTask && topTask.id !== this.currentTask.id) {
             break;
           }
         } else {
-          // 当前任务彻底完结，移出堆顶
           if (this.taskQueue.peek() === this.currentTask) {
             this.taskQueue.pop();
           }
@@ -133,7 +167,6 @@ export class TaskScheduler {
       this.currentTask = null;
       this.isPerformingWork = false;
 
-      // 如果堆中还有剩余任务，继续调度下一轮让出循环
       if (hasMoreWork) {
         this.requestHostCallback();
       }

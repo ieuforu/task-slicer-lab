@@ -1,7 +1,10 @@
-import { TaskScheduler, PriorityLevel } from "./scheduler";
+import { TaskScheduler, PriorityLevel, type Task } from "./scheduler";
 
-const btnBlock = document.getElementById("btn-block") as HTMLButtonElement;
-const btnSlice = document.getElementById("btn-slice") as HTMLButtonElement;
+const btnBg = document.getElementById("btn-bg") as HTMLButtonElement;
+const btnUrgent = document.getElementById("btn-urgent") as HTMLButtonElement;
+const btnCancel = document.getElementById("btn-cancel") as HTMLButtonElement;
+const btnStarve = document.getElementById("btn-starve") as HTMLButtonElement;
+
 const progressFill = document.getElementById("progress") as HTMLDivElement;
 const statusText = document.getElementById("status") as HTMLDivElement;
 const logContainer = document.getElementById("log") as HTMLDivElement;
@@ -11,7 +14,18 @@ const spinnerCanvas = document.getElementById("raf-spinner") as HTMLCanvasElemen
 const sCtx = spinnerCanvas.getContext("2d")!;
 const scheduler = new TaskScheduler();
 
-// 1. requestAnimationFrame 实时 FPS 监控
+let starvationAlertLogged = false;
+
+// 监听防饥饿提权事件
+scheduler.onStarvationResolved = (task, waitTimeMs) => {
+  if (!starvationAlertLogged) {
+    starvationAlertLogged = true;
+    log(
+      `⚠️ [防饥饿触发] Task #${task.id} 耗时/等待已达 ${waitTimeMs.toFixed(0)}ms (超过 800ms 阈值)，剥夺让出权强制同步冲刷到底！`,
+    );
+  }
+};
+
 let angle = 0;
 let lastFrameTime = performance.now();
 let frameCount = 0;
@@ -49,7 +63,6 @@ function log(msg: string) {
     `[${new Date().toLocaleTimeString()}] ${msg}\n` + logContainer.textContent;
 }
 
-// 2. 算力消耗单元（防死代码消除）
 let globalSink = 0;
 function heavyWorkUnit(i: number): number {
   let acc = i;
@@ -59,70 +72,127 @@ function heavyWorkUnit(i: number): number {
   return acc;
 }
 
-// 3. 替换为优先级控制按钮
-btnBlock.textContent = "启动后台长任务 (Background, 30万单元)";
-btnSlice.textContent = "插队高优用户操作 (UserBlocking)";
-btnSlice.className = "btn-block";
-btnBlock.className = "btn-slice";
-
 const TOTAL_UNITS = 300_000;
 let backgroundIndex = 0;
+let currentBgTask: Task | null = null;
+let bgAbortController: AbortController | null = null;
 
-// 触发低优后台切片
-btnBlock.addEventListener("click", () => {
+// 1. 启动后台切片任务
+btnBg.addEventListener("click", () => {
   if (backgroundIndex > 0 && backgroundIndex < TOTAL_UNITS) {
     log("后台任务正在运行中...");
     return;
   }
 
   backgroundIndex = 0;
+  starvationAlertLogged = false;
   progressFill.style.width = "0%";
-  log(`[Background] 任务入队 (优先级: Background)...`);
+  bgAbortController = new AbortController();
 
+  log(`[Background] 任务入队 (优先级: Background, 阈值: 800ms)...`);
   const t0 = performance.now();
 
-  scheduler.postTask((didTimeout) => {
-    const sliceStart = performance.now();
+  currentBgTask = scheduler.postTask(
+    (didTimeout) => {
+      const sliceStart = performance.now();
 
-    // 在单切片内运行子任务，直到用尽时间切片或当前任务到期
-    while (backgroundIndex < TOTAL_UNITS) {
-      globalSink += heavyWorkUnit(backgroundIndex);
-      backgroundIndex++;
+      while (backgroundIndex < TOTAL_UNITS) {
+        globalSink += heavyWorkUnit(backgroundIndex);
+        backgroundIndex++;
 
-      // 5ms 边界检测
-      if (performance.now() - sliceStart >= 5 && !didTimeout) {
-        const ratio = backgroundIndex / TOTAL_UNITS;
-        progressFill.style.width = `${(ratio * 100).toFixed(1)}%`;
-        statusText.textContent = `后台切片推进中: ${(ratio * 100).toFixed(0)}%`;
-        return true; // 返回 true：未完结，保留在堆中继续切片
+        // didTimeout 为 true 时剥夺让出权，直接一口气冲完
+        if (performance.now() - sliceStart >= 5 && !didTimeout) {
+          const ratio = backgroundIndex / TOTAL_UNITS;
+          progressFill.style.width = `${(ratio * 100).toFixed(1)}%`;
+          statusText.textContent = `后台切片推进中: ${(ratio * 100).toFixed(0)}%`;
+          return true;
+        }
       }
-    }
 
-    // 执行完毕
-    const elapsed = performance.now() - t0;
-    progressFill.style.width = "100%";
-    statusText.textContent = `后台任务全部执行完成，总耗时: ${elapsed.toFixed(1)} ms`;
-    log(`[Background] 任务执行完毕，耗时 ${elapsed.toFixed(1)} ms`);
-    return false;
-  }, PriorityLevel.Background);
+      const elapsed = performance.now() - t0;
+      progressFill.style.width = "100%";
+      statusText.textContent = `执行完成，总耗时: ${elapsed.toFixed(1)} ms`;
+      log(`[Background] 任务全部执行完毕，总耗时 ${elapsed.toFixed(1)} ms`);
+      currentBgTask = null;
+      bgAbortController = null;
+      return false;
+    },
+    {
+      priority: PriorityLevel.Background,
+      signal: bgAbortController.signal,
+    },
+  );
 });
 
-// 突发高优事件（模拟用户突然触发的紧急动作）
-btnSlice.addEventListener("click", () => {
-  log(`⚡ [UserBlocking] 高优用户任务突发插队！`);
-
-  scheduler.postTask(() => {
-    const t0 = performance.now();
-    let localAcc = 0;
-
-    // 运行 2,000 个高优计算单元
-    for (let i = 0; i < 2000; i++) {
-      localAcc += heavyWorkUnit(i);
-    }
-    globalSink += localAcc;
-
-    const cost = performance.now() - t0;
-    log(`⚡⚡ [UserBlocking] 高优任务优先处理完毕！耗时: ${cost.toFixed(2)} ms`);
-    return false;
-  }, PriorityLevel.UserBlocking);
+// 2. 突发单次高优操作插队
+btnUrgent.addEventListener("click", () => {
+  log(`⚡ [UserBlocking] 单次高优用户任务突发插队！`);
+  scheduler.postTask(
+    () => {
+      const t0 = performance.now();
+      let acc = 0;
+      for (let i = 0; i < 2000; i++) acc += heavyWorkUnit(i);
+      globalSink += acc;
+      const cost = performance.now() - t0;
+      log(`⚡⚡ [UserBlocking] 高优任务处理完毕！耗时: ${cost.toFixed(2)} ms`);
+      return false;
+    },
+    { priority: PriorityLevel.UserBlocking },
+  );
 });
+
+// 3. 取消任务
+btnCancel.addEventListener("click", () => {
+  if (bgAbortController) {
+    bgAbortController.abort();
+    log(`🛑 [Abort] 外部发出取消信号，后台任务已主动终止！`);
+    statusText.textContent = `任务已取消（停止于 ${((backgroundIndex / TOTAL_UNITS) * 100).toFixed(
+      1,
+    )}%）`;
+    currentBgTask = null;
+    bgAbortController = null;
+  } else {
+    log(`当前没有运行中的后台任务可取消`);
+  }
+});
+
+// 4. 连续高优压制（通过自循环持续投递高优任务，彻底封死主线程）
+let isFlooding = false;
+function scheduleNextFloodTask() {
+  if (!isFlooding) return;
+
+  scheduler.postTask(
+    () => {
+      let acc = 0;
+      // 每次跑 3000 个循环，占据约 10ms
+      for (let i = 0; i < 3000; i++) acc += heavyWorkUnit(i);
+      globalSink += acc;
+
+      // 递归入队下一个高优任务，形成连绵不绝的压制链
+      if (isFlooding) {
+        scheduleNextFloodTask();
+      }
+      return false;
+    },
+    { priority: PriorityLevel.UserBlocking },
+  );
+}
+
+btnStarve.addEventListener("click", () => {
+  if (isFlooding) {
+    isFlooding = false;
+    btnStarve.textContent = "4. 持续高优压制 (测试防饥饿)";
+    log("已停止高优压制。");
+    return;
+  }
+
+  isFlooding = true;
+  btnStarve.textContent = "正在持续高优压制中 (点击停止)...";
+  log("💣 开启持续高优压制链：连续投递 UserBlocking 霸占主线程...");
+  scheduleNextFloodTask();
+});
+
+const strategyText = scheduler.isNativeYieldSupported
+  ? "Native (scheduler.yield)"
+  : "Fallback (MessageChannel)";
+log(`调度系统启动，让出驱动模式: ${strategyText}`);

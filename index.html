@@ -26,7 +26,7 @@
         border-radius: 8px;
         padding: 24px;
         width: 100%;
-        max-width: 600px;
+        max-width: 640px;
         display: flex;
         flex-direction: column;
         gap: 16px;
@@ -55,20 +55,31 @@
         border: none;
         border-radius: 6px;
         font-weight: 600;
-        font-size: 14px;
+        font-size: 13px;
         cursor: pointer;
         transition: opacity 0.2s;
+      }
+      button:active {
+        opacity: 0.8;
       }
       button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .btn-block {
+      .btn-bg {
+        background: #10b981;
+        color: white;
+      }
+      .btn-urgent {
         background: #ef4444;
         color: white;
       }
-      .btn-slice {
-        background: #10b981;
+      .btn-cancel {
+        background: #eab308;
+        color: #0f172a;
+      }
+      .btn-starve {
+        background: #8b5cf6;
         color: white;
       }
       input {
@@ -100,11 +111,12 @@
         font-size: 12px;
         color: #94a3b8;
         white-space: pre-wrap;
-        max-height: 140px;
+        max-height: 180px;
         overflow-y: auto;
         background: #0f172a;
         padding: 12px;
         border-radius: 6px;
+        line-height: 1.5;
       }
     </style>
   </head>
@@ -116,7 +128,7 @@
         <div>
           <div class="fps-text" id="fps-val">-- FPS</div>
           <div style="font-size: 12px; color: #94a3b8">
-            基于 requestAnimationFrame 逐帧驱动。主线程卡死时指针瞬间停止，FPS 归零。
+            基于 requestAnimationFrame 逐帧驱动。主线程卡死时指针瞬间定格。
           </div>
         </div>
       </div>
@@ -132,8 +144,10 @@
     <div class="panel">
       <h2>长任务实验控制台</h2>
       <div class="btn-group">
-        <button id="btn-block" class="btn-block">1. 同步阻塞执行</button>
-        <button id="btn-slice" class="btn-slice">2. 调度切片执行</button>
+        <button id="btn-bg" class="btn-bg">1. 启动后台切片 (Background)</button>
+        <button id="btn-urgent" class="btn-urgent">2. 插队高优操作 (UserBlocking)</button>
+        <button id="btn-cancel" class="btn-cancel">3. 取消后台任务 (Abort)</button>
+        <button id="btn-starve" class="btn-starve">4. 持续高优压制 (测试防饥饿)</button>
       </div>
 
       <div class="progress-bar-bg">
