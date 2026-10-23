@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Task Slicer Lab</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        background: #0f172a;
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 40px 20px;
+        gap: 20px;
+      }
+      .panel {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 24px;
+        width: 100%;
+        max-width: 600px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .monitor-box {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        background: #0f172a;
+        padding: 16px;
+        border-radius: 6px;
+        border: 1px solid #334155;
+      }
+      .fps-text {
+        font-size: 24px;
+        font-weight: bold;
+        color: #38bdf8;
+      }
+      .btn-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      button {
+        padding: 14px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        transition: opacity 0.2s;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .btn-block {
+        background: #ef4444;
+        color: white;
+      }
+      .btn-slice {
+        background: #10b981;
+        color: white;
+      }
+      input {
+        width: 100%;
+        padding: 12px;
+        background: #0f172a;
+        border: 1px solid #475569;
+        border-radius: 6px;
+        color: #f8fafc;
+        font-size: 14px;
+      }
+      .progress-bar-bg {
+        width: 100%;
+        height: 14px;
+        background: #0f172a;
+        border-radius: 7px;
+        overflow: hidden;
+      }
+      .progress-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: #38bdf8;
+      }
+      #status {
+        font-size: 14px;
+        color: #38bdf8;
+      }
+      #log {
+        font-size: 12px;
+        color: #94a3b8;
+        white-space: pre-wrap;
+        max-height: 140px;
+        overflow-y: auto;
+        background: #0f172a;
+        padding: 12px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h2>主线程实时状态探测仪</h2>
+      <div class="monitor-box">
+        <canvas id="raf-spinner" width="48" height="48"></canvas>
+        <div>
+          <div class="fps-text" id="fps-val">-- FPS</div>
+          <div style="font-size: 12px; color: #94a3b8">
+            基于 requestAnimationFrame 逐帧驱动。主线程卡死时指针瞬间停止，FPS 归零。
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label style="display: block; margin-bottom: 6px; font-size: 13px"
+          >交互响应测试（在计算运行时尝试打字）：</label
+        >
+        <input type="text" placeholder="主线程卡死时这里完全敲不进字..." />
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>长任务实验控制台</h2>
+      <div class="btn-group">
+        <button id="btn-block" class="btn-block">1. 同步阻塞执行</button>
+        <button id="btn-slice" class="btn-slice">2. 调度切片执行</button>
+      </div>
+
+      <div class="progress-bar-bg">
+        <div id="progress" class="progress-bar-fill"></div>
+      </div>
+      <div id="status">就绪 (等待任务触发)</div>
+      <div id="log"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
