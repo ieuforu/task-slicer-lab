@@ -1,5 +1,12 @@
 # task-slicer-lab
 
+> **已迁移 / Moved（2026-11-01）**
+>
+> 当前代码、文档与后续维护已移至 [frontend-labs / labs/task-slicer](https://github.com/ieuforu/frontend-labs/tree/main/labs/task-slicer)。请在新仓库提交 Issue 和 PR。
+>
+> 原仓库的提交历史已完整保留在新仓库；本仓库保留历史版本。下方是迁移前的说明，其中性能与生产可用性描述不代表当前验证结论，当前行为和限制请以新仓库文档为准。
+
+
 A production-grade, zero-dependency cooperative main-thread task scheduler built from scratch with TypeScript. Features 5ms frame-budget time-slicing, Min-Heap priority queuing with absolute expiration deadlines, lazy cancellation via `AbortSignal`, and automatic fallback from native W3C `scheduler.yield()` to zero-delay `MessageChannel` macro-tasks.
 
 ---
